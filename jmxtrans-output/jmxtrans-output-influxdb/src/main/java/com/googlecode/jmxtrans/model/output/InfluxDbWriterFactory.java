@@ -39,6 +39,9 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.regex.Pattern;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
 import static java.lang.Boolean.FALSE;
@@ -68,64 +71,69 @@ public class InfluxDbWriterFactory implements OutputWriterFactory {
 	private final boolean reportJmxPortAsTag;
 	private final ImmutableList<String> typeNames;
 	private final boolean allowStringValues;
+	private final ImmutableMap<String, Pattern> tagsRenamingRegex;
 
 	/**
-	 * @param typeNames			- List of typeNames keys to use in fields by default
-	 * @param BooleanAsNumber	- output boolean attributes as number
-	 * @param url				- The url e.g http://localhost:8086 to InfluxDB
-	 * @param username			- The username for InfluxDB
-	 * @param password			- The password for InfluxDB
-	 * @param database			- The name of the database (created if does not exist) on
-	 * @param tags				- Map of custom tags with custom values
-	 * @param writeConsistency	- The write consistency for InfluxDB.
-	 * 								<ul>Valid values : 
+	 * @param typeNames            - List of typeNames keys to use in fields by default
+	 * @param BooleanAsNumber    - output boolean attributes as number
+	 * @param url                - The url e.g http://localhost:8086 to InfluxDB
+	 * @param username            - The username for InfluxDB
+	 * @param password            - The password for InfluxDB
+	 * @param database            - The name of the database (created if does not exist) on
+	 * @param tags                - Map of custom tags with custom values
+	 * @param writeConsistency    - The write consistency for InfluxDB.
+	 * 								<ul>Valid values :
 	 * 									<li>"ALL" (by default)</li>
 	 * 									<li>"ANY"</li>
 	 * 									<li>"ONE"</li>
 	 * 									<li>"QUORUM"</li>
 	 * 								</ul>
-	 * @param retentionPolicy	- The retention policy for InfluxDB
-	 * @param resultTags		- A list of meta-data from the result to add as tags. Sends all meta-data by default
-	 * 								<ul>Available data : 
+	 * @param retentionPolicy    - The retention policy for InfluxDB
+	 * @param resultTags        - A list of meta-data from the result to add as tags. Sends all meta-data by default
+	 * 								<ul>Available data :
 	 * 									<li>"typeName"</li>
 	 * 									<li>"objDomain"</li>
 	 * 									<li>"className"</li>
 	 * 									<li>"attributeName"</li>
 	 * 								</ul>
-	 * @param createDatabase	- Creates the database in InfluxDB if not found
+	 * @param createDatabase    - Creates the database in InfluxDB if not found
 	 * @param reportJmxPortAsTag - Sends the JMX server port as tag instead of field
-	 * @param typeNamesAsTags	- Sends the given list of typeNames as tags instead of fields keys
+	 * @param typeNamesAsTags    - Sends the given list of typeNames as tags instead of fields keys
 	 * @param allowStringValues - Allows the OutputWriter to send String Values
+	 * @param resultTagsRegex    - Allows usage of regex for transforming result tags
+	 *                          	to be used with combination of resultTags (or typeNamesAsTags)
 	 */
 	@JsonCreator
 	public InfluxDbWriterFactory(
-			@JsonProperty("typeNames") ImmutableList<String> typeNames,
-			@JsonProperty("booleanAsNumber") boolean booleanAsNumber,
-			@JsonProperty("url") String url,
-			@JsonProperty("username") String username,
-			@JsonProperty("password") String password,
-			@JsonProperty("database") String database,
-			@JsonProperty("tags") ImmutableMap<String, String> tags,
-			@JsonProperty("writeConsistency") String writeConsistency,
-			@JsonProperty("retentionPolicy") String retentionPolicy,
-			@JsonProperty("resultTags") List<String> resultTags,
-			@JsonProperty("createDatabase") Boolean createDatabase,
-			@JsonProperty("reportJmxPortAsTag") Boolean reportJmxPortAsTag,
-			@JsonProperty("typeNamesAsTags") Boolean typeNamesAsTags,
-			@JsonProperty("allowStringValues") Boolean allowStringValues) {
-		
-		this.typeNames = firstNonNull(typeNames,ImmutableList.<String>of());
+		@JsonProperty("typeNames") ImmutableList<String> typeNames,
+		@JsonProperty("booleanAsNumber") boolean booleanAsNumber,
+		@JsonProperty("url") String url,
+		@JsonProperty("username") String username,
+		@JsonProperty("password") String password,
+		@JsonProperty("database") String database,
+		@JsonProperty("tags") ImmutableMap<String, String> tags,
+		@JsonProperty("writeConsistency") String writeConsistency,
+		@JsonProperty("retentionPolicy") String retentionPolicy,
+		@JsonProperty("resultTags") List<String> resultTags,
+		@JsonProperty("createDatabase") Boolean createDatabase,
+		@JsonProperty("reportJmxPortAsTag") Boolean reportJmxPortAsTag,
+		@JsonProperty("typeNamesAsTags") Boolean typeNamesAsTags,
+		@JsonProperty("allowStringValues") Boolean allowStringValues,
+		@JsonProperty("resultTagsRegex") ImmutableMap<String, String> resultTagsRegex) {
+
+		this.typeNames = firstNonNull(typeNames, ImmutableList.<String>of());
 		this.booleanAsNumber = booleanAsNumber;
 		this.database = database;
 		this.createDatabase = firstNonNull(createDatabase, TRUE);
 		this.typeNamesAsTags = firstNonNull(typeNamesAsTags, FALSE);
 		this.allowStringValues = firstNonNull(allowStringValues, FALSE);
 		this.writeConsistency = StringUtils.isNotBlank(writeConsistency)
-				? InfluxDB.ConsistencyLevel.valueOf(writeConsistency) : InfluxDB.ConsistencyLevel.ALL;
+			? InfluxDB.ConsistencyLevel.valueOf(writeConsistency) : InfluxDB.ConsistencyLevel.ALL;
 		this.retentionPolicy = StringUtils.isNotBlank(retentionPolicy) ? retentionPolicy : DEFAULT_RETENTION_POLICY;
 		this.resultAttributesToWriteAsTags = initResultAttributesToWriteAsTags(resultTags);
 		this.tags = initCustomTagsMap(tags);
-		
+		this.tagsRenamingRegex = initResultTagsRegex(resultTagsRegex);
+
 		LOG.debug("Connecting to url: {} as: username: {}", url, username);
 
 		influxDB = InfluxDBFactory.connect(url, username, password);
@@ -133,9 +141,19 @@ public class InfluxDbWriterFactory implements OutputWriterFactory {
 		this.reportJmxPortAsTag = firstNonNull(reportJmxPortAsTag, FALSE);
 	}
 
+	private ImmutableMap<String, Pattern> initResultTagsRegex(ImmutableMap<String, String> resultTagsRegex) {
+		Map<String, Pattern> regexMap = new TreeMap<String, Pattern>();
+		if (resultTagsRegex != null) {
+			for (ImmutableMap.Entry<String, String> entry : resultTagsRegex.entrySet()) {
+				regexMap.put(entry.getKey(), Pattern.compile(entry.getValue()));
+			}
+		}
+		return ImmutableMap.copyOf(regexMap);
+	}
+
 
 	private ImmutableMap<String, String> initCustomTagsMap(ImmutableMap<String, String> tags) {
-		return ImmutableMap.copyOf(firstNonNull(tags, Collections.<String,String>emptyMap()));
+		return ImmutableMap.copyOf(firstNonNull(tags, Collections.<String, String>emptyMap()));
 	}
 
 	private ImmutableSet<ResultAttribute> initResultAttributesToWriteAsTags(List<String> resultTags) {
@@ -152,6 +170,6 @@ public class InfluxDbWriterFactory implements OutputWriterFactory {
 	@Override
 	public ResultTransformerOutputWriter<InfluxDbWriter> create() {
 		return ResultTransformerOutputWriter.booleanToNumber(booleanAsNumber, new InfluxDbWriter(influxDB, database,
-				writeConsistency, retentionPolicy, tags, resultAttributesToWriteAsTags, typeNames, createDatabase, reportJmxPortAsTag, typeNamesAsTags, allowStringValues));
+			writeConsistency, retentionPolicy, tags, resultAttributesToWriteAsTags, tagsRenamingRegex, typeNames, createDatabase, reportJmxPortAsTag, typeNamesAsTags, allowStringValues));
 	}
 }

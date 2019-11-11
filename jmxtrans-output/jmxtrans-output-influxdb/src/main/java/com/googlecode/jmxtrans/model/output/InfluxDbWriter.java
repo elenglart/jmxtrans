@@ -44,6 +44,8 @@ import javax.annotation.concurrent.ThreadSafe;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static com.google.common.collect.Maps.newHashMap;
 import static com.googlecode.jmxtrans.util.NumberUtils.isValidNumber;
@@ -68,6 +70,7 @@ public class InfluxDbWriter extends OutputWriterAdapter {
 	@Nonnull private final ConsistencyLevel writeConsistency;
 	@Nonnull private final String retentionPolicy;
 	@Nonnull private final ImmutableMap<String,String> tags;
+	@Nonnull private final ImmutableMap<String,Pattern> resultTagsRegex;
 	@Nonnull ImmutableList<String> typeNames;
 
 	/**
@@ -82,17 +85,18 @@ public class InfluxDbWriter extends OutputWriterAdapter {
 	private final boolean reportJmxPortAsTag;
 
 	public InfluxDbWriter(
-			@Nonnull InfluxDB influxDB,
-			@Nonnull String database,
-			@Nonnull ConsistencyLevel writeConsistency,
-			@Nonnull String retentionPolicy,
-			@Nonnull ImmutableMap<String,String> tags,
-			@Nonnull ImmutableSet<ResultAttribute> resultAttributesToWriteAsTags,
-			@Nonnull ImmutableList<String> typeNames,
-			boolean createDatabase,
-			boolean reportJmxPortAsTag,
-			boolean typeNamesAsTags,
-			boolean allowStringValues) {
+		@Nonnull InfluxDB influxDB,
+		@Nonnull String database,
+		@Nonnull ConsistencyLevel writeConsistency,
+		@Nonnull String retentionPolicy,
+		@Nonnull ImmutableMap<String,String> tags,
+		@Nonnull ImmutableSet<ResultAttribute> resultAttributesToWriteAsTags,
+		@Nonnull ImmutableMap<String, Pattern> resultTagsRegex,
+		@Nonnull ImmutableList<String> typeNames,
+		boolean createDatabase,
+		boolean reportJmxPortAsTag,
+		boolean typeNamesAsTags,
+		boolean allowStringValues) {
 		this.typeNames = typeNames;
 		this.database = database;
 		this.writeConsistency = writeConsistency;
@@ -100,6 +104,7 @@ public class InfluxDbWriter extends OutputWriterAdapter {
 		this.influxDB = influxDB;
 		this.tags = tags;
 		this.resultAttributesToWriteAsTags = resultAttributesToWriteAsTags;
+		this.resultTagsRegex = resultTagsRegex;
 		this.createDatabase = createDatabase;
 		this.reportJmxPortAsTag = reportJmxPortAsTag;
 		this.typeNamesAsTags = typeNamesAsTags;
@@ -218,7 +223,13 @@ public class InfluxDbWriter extends OutputWriterAdapter {
 		if (typeNamesAsTags) {
 			Map<String, String> typeNameValueMap = result.getTypeNameMap();
 			for (Map.Entry<String, String> entry : typeNameValueMap.entrySet()) {
-				resultTagMap.put(entry.getKey(), entry.getValue());
+
+				String evalValue = entry.getValue();
+				if(resultTagsRegex.containsKey(entry.getKey())) {
+					Matcher matcher = resultTagsRegex.get(entry.getKey()).matcher(evalValue);
+					if (matcher.matches() && matcher.groupCount() > 0) evalValue = matcher.group(1);
+				}
+				resultTagMap.put(entry.getKey(), evalValue);
 			}
 		}
 
