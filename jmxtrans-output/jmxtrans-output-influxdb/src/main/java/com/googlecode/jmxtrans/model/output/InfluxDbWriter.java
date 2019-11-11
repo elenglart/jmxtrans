@@ -171,13 +171,13 @@ public class InfluxDbWriter extends OutputWriterAdapter {
 		}
 
 		BatchPoints batchPoints = batchPointsBuilder.consistency(writeConsistency).build();
-		
+
 		ImmutableList<String> typeNamesParam = null;
 		// if not typeNamesAsTag, we concat typeName in values.
 		if (!typeNamesAsTags) {
 			typeNamesParam = this.typeNames;
 		}
-		
+
 		for (Result result : results) {
 			log.debug("Query result: {}", result);
 
@@ -217,10 +217,8 @@ public class InfluxDbWriter extends OutputWriterAdapter {
 
 		if (typeNamesAsTags) {
 			Map<String, String> typeNameValueMap = result.getTypeNameMap();
-			for (String typeToTag : this.typeNames) {
-				if (typeNameValueMap.containsKey(typeToTag)) {
-					resultTagMap.put(typeToTag, typeNameValueMap.get(typeToTag));
-				}
+			for (Map.Entry<String, String> entry : typeNameValueMap.entrySet()) {
+				resultTagMap.put(entry.getKey(), entry.getValue());
 			}
 		}
 
